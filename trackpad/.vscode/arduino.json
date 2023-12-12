@@ -1,0 +1,8 @@
+{
+    "port": "COM4",
+    "configuration": "PartitionScheme=default,FlashFreq=80,UploadSpeed=921600,DebugLevel=none,EraseFlash=none",
+    "board": "espressif:esp32:d32",
+    "programmer": "esptool",
+    "sketch": "trackpad.ino",
+    "output": "../build"
+}
