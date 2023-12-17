@@ -1,16 +1,16 @@
-//#line 1 "C:\\Users\\Byron\\Documents\\Arduino\\Cyberdeck\\trackpad\\trackpad.ino"
-// #include <NimBLEDevice.h>
-
-//#include <BleMouse.h>
-#include <BleMultiHID.h>
-//#include <BleMultiHIDConfiguration.h>
-
 // Trackpad includes
 #include <SPI.h>
 
 // Gamepad includes
 #include <SimpleKalmanFilter.h>
 #include <Arduino.h>
+
+#include <MouseDevice.h>
+#include <GamepadDevice.h>
+#include <BleCompositeHID.h>
+
+#include <MouseConfiguration.h>
+#include <GamepadConfiguration.h>
 
 
 // ___ Using a Cirque TM0XX0XX w/ Flat Overlay and Arduino ___
@@ -113,8 +113,9 @@ const long SERIAL_REFRESH_TIME = 8;
 long refresh_time;
 
 // HID devices
-//BleMouse bleMouse;
-BleMultiHID bleMultiHID;
+GamepadDevice* gamepad;
+MouseDevice* mouse;
+BleCompositeHID compositeHID;
 
 // Input filters
 SimpleKalmanFilter LeftTriggerKalmanFilter(0.2f, 0.2f, 0.01);
@@ -156,21 +157,31 @@ void setup()
   analogReadResolution(12);
 
   Serial.println("Starting BLE work!");
-
-  // Set up gamepad
-  BleMultiHIDConfiguration bleMultiHIDConfig;
-  bleMultiHIDConfig.setAutoReport(false); // This is true by default
-  bleMultiHIDConfig.setButtonCount(16);
-  bleMultiHIDConfig.setHatSwitchCount(0); 
-  bleMultiHIDConfig.setUseMouse(true);
-  //bleMultiHIDConfig.setWhichAxes(false, false, false, false, false, false, false, false);
-  bleMultiHID.begin(&bleMultiHIDConfig); // Creates a gamepad with 128 buttons, 2 hat switches and x, y, z, rZ, rX, rY and 2 sliders (no simulation controls enabled by default)
-  Serial.println("Gamepad setup");
   
-  // Set up Mouse
-  //bleMouse.begin();
-  Serial.println("Mouse setup");
+  // Set up gamepad
+  GamepadConfiguration gamepadConfig;
+  gamepadConfig.setButtonCount(16);
+  gamepadConfig.setHatSwitchCount(0);
+  gamepadConfig.setAutoReport(false);
+  gamepad = new GamepadDevice(gamepadConfig);
+  Serial.println("Created gamepad device");
 
+  // Set up mouse
+  MouseConfiguration mouseConfig;
+  mouseConfig.setAutoReport(false);
+  mouse = new MouseDevice(mouseConfig);
+  Serial.println("Created mouse device");
+
+  // Add both devices to the composite HID device to manage them
+  compositeHID.addDevice(gamepad);
+  compositeHID.addDevice(mouse);
+
+  // Start the composite HID device to broadcast HID reports
+  Serial.println("Starting composite HID device...");
+  compositeHID.begin();
+  Serial.println("Composite HID device started");
+  
+  // Setup LED
   pinMode(LED_0, OUTPUT);
 
   // Set up trackpad
@@ -183,50 +194,47 @@ void setup()
 void loop() 
 {
   // Touchpad loop
-  //delay(10);
-  //Serial.println("In loop");
+  delay(8);
   if(DR_Asserted())
   {
     Pinnacle_GetRelative(&relData);
 
-    if(bleMultiHID.isConnected()) {
+    // Update serial debug
+    if(millis() > refresh_time){
+      Serial.print("X: ");
+      Serial.print(relData.xDelta);
+      Serial.print(" Y: ");
+      Serial.print(relData.yDelta);
+      Serial.println("");
+    }
 
+    if(compositeHID.isConnected()){
       // Mouse the mouse
-      bleMultiHID.mouseMove(relData.xDelta, relData.yDelta, 0, 0);
+      mouse->mouseMove(relData.xDelta, relData.yDelta, 0, 0);
 
       // Handle button state changes
       if(relData.buttonFlags & 0x01){
         //Serial.print(" Click: 1");
         if(!(lastRelData.buttonFlags & 0x01)){
-          bleMultiHID.mousePress(MOUSE_LOGICAL_LEFT_BUTTON);
+          mouse->mousePress(MOUSE_LOGICAL_LEFT_BUTTON);
           AssertSensorLED(touchData.touchDown);
         }
       } else {
         //Serial.print(" Click: 0");
         if(lastRelData.buttonFlags & 0x01){
-          bleMultiHID.mouseRelease(MOUSE_LOGICAL_LEFT_BUTTON);
+          mouse->mouseRelease(MOUSE_LOGICAL_LEFT_BUTTON);
           AssertSensorLED(touchData.touchDown);
         }
       }
       lastRelData = relData;
 
       // Send HID report
-      bleMultiHID.sendMouseReport();
+      mouse->sendMouseReport();
     }
   }
 
-  // Update serial debug
-  if(millis() > refresh_time){
-    Serial.print("X: ");
-    Serial.print(relData.xDelta);
-    Serial.print(" Y: ");
-    Serial.print(relData.yDelta);
-    Serial.println("");
-  }
-  
   // Gamepad loop
-  if (bleMultiHID.isConnected())
-  {
+  if(compositeHID.isConnected()){
     float trigger_left = get_trigger_value(A0, LeftTriggerKalmanFilter);
     float trigger_right = get_trigger_value(A3, RightTriggerKalmanFilter);
 
@@ -249,9 +257,9 @@ void loop()
         Serial.println(mapped_trigger_right);
       }
 
-      bleMultiHID.setLeftTrigger(gamepadData.triggerLeft);
-      bleMultiHID.setRightTrigger(gamepadData.triggerRight);
-      bleMultiHID.sendGamepadReport();
+      gamepad->setLeftTrigger(gamepadData.triggerLeft);
+      gamepad->setRightTrigger(gamepadData.triggerRight);
+      gamepad->sendGamepadReport();
     }
 
     lastGamepadState = gamepadData;
