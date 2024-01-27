@@ -9,12 +9,12 @@
 #include "SSD1306.h"
 #include "OLEDDisplayUi.h"
 
-#define MCP_CS_PIN 1
+#define MCP_CS_PIN 33
 #define TRACKPAD_CS_PIN    32
-#define TRACKPAD_DR_PIN    33
-#define BUTTON_1_PIN 2
-#define BUTTON_2_PIN 3
-#define BUTTON_3_PIN 4
+#define TRACKPAD_DR_PIN    34
+#define BUTTON_1_PIN 8
+#define BUTTON_2_PIN 9
+#define BUTTON_3_PIN 10
 
 const uint8_t activeSymbol[] PROGMEM = {
     B00000000,
@@ -56,8 +56,8 @@ enum class ControllerHand {
 };
 
 // Input devices
+MCP23S17 MCP(MCP_CS_PIN);
 CirqueTrackpad trackpad(TRACKPAD_CS_PIN, TRACKPAD_DR_PIN);
-//MCP23S17 MCP(MCP_CS_PIN);
 
 TrackpadMode currentTrackpadMode = TrackpadMode::Joystick;
 ControllerHand currentControllerHand = ControllerHand::Left;
@@ -90,62 +90,69 @@ void drawJoystick(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, in
 
     int circX = mapint(lastAbsData.xValue, PINNACLE_X_LOWER, PINNACLE_X_UPPER, 32 + 8, 96 - 8);
     int circY = mapint(lastAbsData.yValue, PINNACLE_Y_LOWER, PINNACLE_Y_UPPER, 16, 48);
+
     if(lastAbsData.touchDown)
         display->fillCircle(circX + x, circY + y, 16);
-    display->drawCircle(64 + x, 32 + x,  32);
 
-    display->setTextAlignment(TEXT_ALIGN_RIGHT);
-    display->setFont(ArialMT_Plain_10);
+    display->drawCircle(64 + x, 32 + x,  32);
 
     String xPrefix = "X:";
     String yPrefix = "Y:";
-
     String xStr = String(lastAbsData.xValue);
     String yStr = String(lastAbsData.yValue);
 
-    for(size_t charCount = 4 - xStr.length() + 1; charCount >= 0; charCount--){
-        xPrefix += " ";
-    }
-    for(size_t charCount = 4 - yStr.length() + 1; charCount >= 0; charCount--){
-        yPrefix += " ";
-    }
-
+    // for(size_t charCount = 4 - xStr.length() + 1; charCount > 0; charCount--){
+    //     xPrefix += " ";
+    // }
+    // for(size_t charCount = 4 - yStr.length() + 1; charCount >=0; charCount--){
+    //     yPrefix += " ";
+    // }
+    display->setTextAlignment(TEXT_ALIGN_RIGHT);
+    display->setFont(ArialMT_Plain_10);
     display->drawString(128, 0, xPrefix + xStr);
     display->drawString(128, 12, yPrefix + yStr);
 }
 
 FrameCallback frames[] = { drawJoystick };
-int frameCount = sizeof(frames) / sizeof(FrameCallback);
+int frameCount = 1;
 
 
 void buttonOverlay(OLEDDisplay *display, OLEDDisplayUiState* state) {
     display->setColor(WHITE);
     if (button1Pressed){
-        display->fillCircle(10, 56, 8);
+        display->fillCircle(5, 56, 2);
     } else {
-        display->drawCircle(10, 56, 8);
+        display->drawCircle(5, 56, 2);
     }
 
      if (button2Pressed){
-        display->fillCircle(20, 56, 8);
+        display->fillCircle(10, 56, 2);
     } else {
-        display->drawCircle(10, 56, 8);
+        display->drawCircle(10, 56, 2);
     }
 
-     if (button3Pressed){
-        display->fillCircle(30, 56, 8);
+    if (button3Pressed){
+        display->fillCircle(15, 56, 2);
     } else {
-        display->drawCircle(10, 56, 8);
+        display->drawCircle(15, 56, 2);
     }
 }
 OverlayCallback overlays[] = { buttonOverlay };
-int overlaysCount = sizeof(overlays) / sizeof(OverlayCallback);
+int overlaysCount = 1;
 
 
 void setup() {
     Serial.begin(115200);
 
+    // Set up IO expander
+    Serial.println("Enabling expanded IO");
+    MCP.begin();
+    MCP.pinMode1(BUTTON_1_PIN, INPUT_PULLUP);
+    MCP.pinMode1(BUTTON_2_PIN, INPUT_PULLUP);
+    MCP.pinMode1(BUTTON_3_PIN, INPUT_PULLUP);
+
     // Set up trackpad
+    Serial.println("Enabling trackpad");
     trackpad.Init();
     trackpad.EnableFeed(true);
 
@@ -156,30 +163,28 @@ void setup() {
     
     trackpad.SetInverseY(false);
 
-    // Set up IO expander
-    //MCP.begin();
-    //MCP.pinMode1(BUTTON_1_PIN, INPUT_PULLUP);
-    //MCP.pinMode1(BUTTON_2_PIN, INPUT_PULLUP);
-    //MCP.pinMode1(BUTTON_3_PIN, INPUT_PULLUP);
-
     // Set up gamepad
+    Serial.println("Enabling gamepad");
     XboxOneSControllerDeviceConfiguration* config = new XboxOneSControllerDeviceConfiguration();
     auto hostConfig = config->getIdealHostConfiguration();  
     gamepad = new XboxGamepadDevice(config);
+    composite.addDevice(gamepad);
 
     // Set up mouse
+    //Serial.println("Enabling mouse");
     mouse = new MouseDevice();
+    //composite.addDevice(mouse);   // Removed for linux dev environment
 
     // Set up composite HID
-    //composite.addDevice(mouse);   // Removed for linux dev environment
-    composite.addDevice(gamepad);
+    Serial.println("Enabling composite HID");
     composite.begin(hostConfig);
 
     // Set up ui
     // The ESP is capable of rendering 60fps in 80Mhz mode
     // but that won't give you much time for anything else
     // run it in 160Mhz mode or just set it to 30 fps
-    ui.setTargetFPS(60);
+    Serial.println("Enabling UI");
+    ui.setTargetFPS(30);
 
     ui.disableAutoTransition();
 
@@ -202,12 +207,10 @@ void setup() {
     ui.setFrames(frames, frameCount);
 
     // Add overlays
-    //ui.setOverlays(overlays, overlaysCount);
+    ui.setOverlays(overlays, overlaysCount);
 
     // Initialising the UI will init the display too.
     ui.init();
-
-
 }
 
 void loop() {
@@ -257,7 +260,11 @@ void loop() {
             refresh_time = millis() + SERIAL_REFRESH_TIME;
         }
     }
-    /*
+
+    button1Pressed = !MCP.read1(BUTTON_1_PIN);
+    button2Pressed = !MCP.read1(BUTTON_2_PIN);
+    button3Pressed = !MCP.read1(BUTTON_3_PIN);
+/*
     if(MCP.read1(BUTTON_1_PIN) == LOW)
     {
         button1Pressed = true;
@@ -292,8 +299,7 @@ void loop() {
     } else {
         button3Pressed = false;
     }
-    */
-
+*/
     // Update the screen
     ui.update();
 }
