@@ -1,3 +1,6 @@
+#include <Arduino.h>
+#include <Ticker.h>
+
 #include "CirqueTrackpad.h"
 
 #include <MouseDevice.h>
@@ -5,16 +8,24 @@
 #include <BleCompositeHID.h>
 
 #include "MCP23S17.h"
-
 #include "SSD1306.h"
 #include "OLEDDisplayUi.h"
 
 #define MCP_CS_PIN 33
 #define TRACKPAD_CS_PIN    32
 #define TRACKPAD_DR_PIN    34
+
 #define BUTTON_1_PIN 8
 #define BUTTON_2_PIN 9
 #define BUTTON_3_PIN 10
+#define BUTTON_4_PIN 11
+#define BUTTON_5_PIN 12
+#define BUTTON_6_PIN 13
+#define BUTTON_7_PIN 14
+#define BUTTON_8_PIN 15
+
+#define HAPTIC_PIN 17
+
 
 const uint8_t activeSymbol[] PROGMEM = {
     B00000000,
@@ -64,11 +75,20 @@ ControllerHand currentControllerHand = ControllerHand::Left;
 bool button1Pressed = false;
 bool button2Pressed = false;
 bool button3Pressed = false;
+bool button4Pressed = false;
+bool button5Pressed = false;
+bool button6Pressed = false;
+bool button7Pressed = false;
+bool button8Pressed = false;
 
 // Output devices
 XboxGamepadDevice* gamepad = nullptr;
 MouseDevice* mouse = nullptr;
 BleCompositeHID composite("PicaTTY Controller", "Mystfit", 100);
+
+// Haptics
+Ticker hapticTimer;
+bool hapticState = false;
 
 // Display
 SSD1306Wire display(0x3c, SDA, SCL);  // ADDRESS, SDA, SCL  -  SDA and SCL usually populate automatically based on your board's pins_arduino.h e.g. https://github.com/esp8266/Arduino/blob/master/variants/nodemcu/pins_arduino.h
@@ -93,6 +113,8 @@ void drawJoystick(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, in
 
     if(lastAbsData.touchDown)
         display->fillCircle(circX + x, circY + y, 16);
+    else
+        display->drawCircle(64 + x, 32 + y, 16);
 
     display->drawCircle(64 + x, 32 + x,  32);
 
@@ -136,6 +158,36 @@ void buttonOverlay(OLEDDisplay *display, OLEDDisplayUiState* state) {
     } else {
         display->drawCircle(15, 56, 2);
     }
+
+    if (button4Pressed){
+        display->fillCircle(20, 56, 2);
+    } else {
+        display->drawCircle(20, 56, 2);
+    }
+
+    if (button5Pressed){
+        display->fillCircle(5, 60, 2);
+    } else {
+        display->drawCircle(5, 60, 2);
+    }
+
+    if (button6Pressed){
+        display->fillCircle(10, 60, 2);
+    } else {
+        display->drawCircle(10, 60, 2);
+    }
+
+    if (button7Pressed){
+        display->fillCircle(15, 60, 2);
+    } else {
+        display->drawCircle(15, 60, 2);
+    }
+
+    if (button8Pressed){
+        display->fillCircle(20, 60, 2);
+    } else {
+        display->drawCircle(20, 60, 2);
+    }
 }
 OverlayCallback overlays[] = { buttonOverlay };
 int overlaysCount = 1;
@@ -147,9 +199,19 @@ void setup() {
     // Set up IO expander
     Serial.println("Enabling expanded IO");
     MCP.begin();
+    delay(100);
     MCP.pinMode1(BUTTON_1_PIN, INPUT_PULLUP);
     MCP.pinMode1(BUTTON_2_PIN, INPUT_PULLUP);
     MCP.pinMode1(BUTTON_3_PIN, INPUT_PULLUP);
+    MCP.pinMode1(BUTTON_4_PIN, INPUT_PULLUP);
+    MCP.pinMode1(BUTTON_5_PIN, INPUT_PULLUP);
+    MCP.pinMode1(BUTTON_6_PIN, INPUT_PULLUP);
+    MCP.pinMode1(BUTTON_7_PIN, INPUT_PULLUP);
+    MCP.pinMode1(BUTTON_8_PIN, INPUT_PULLUP);
+
+    // Set up haptics
+    Serial.println("Enabling haptic");
+    pinMode(HAPTIC_PIN, OUTPUT);
 
     // Set up trackpad
     Serial.println("Enabling trackpad");
@@ -247,6 +309,11 @@ void loop() {
                 int x = mapint(absData.xValue, PINNACLE_X_LOWER, PINNACLE_X_UPPER, -32767, 32767);
                 int y = mapint(absData.yValue, PINNACLE_Y_LOWER, PINNACLE_Y_UPPER, -32767, 32767);
 
+                if(!absData.touchDown){
+                    x = 0;
+                    y = 0;
+                }
+
                 if(currentControllerHand == ControllerHand::Left)
                     gamepad->setLeftThumb(x, y);
                 else
@@ -264,6 +331,119 @@ void loop() {
     button1Pressed = !MCP.read1(BUTTON_1_PIN);
     button2Pressed = !MCP.read1(BUTTON_2_PIN);
     button3Pressed = !MCP.read1(BUTTON_3_PIN);
+    button4Pressed = !MCP.read1(BUTTON_4_PIN);
+    button5Pressed = !MCP.read1(BUTTON_5_PIN);
+    button6Pressed = !MCP.read1(BUTTON_6_PIN);
+    button7Pressed = !MCP.read1(BUTTON_7_PIN);
+    button8Pressed = !MCP.read1(BUTTON_8_PIN);
+
+    if(!button1Pressed && !MCP.read1(BUTTON_1_PIN)){
+        button1Pressed = true;
+        hapticPulse(160, 100);
+        if(currentControllerHand == ControllerHand::Left)
+            gamepad->pressDPadDirection(XBOX_BUTTON_DPAD_SOUTH);
+        else
+            gamepad->press(XBOX_BUTTON_A);
+    } 
+    if (button1Pressed && MCP.read1(BUTTON_1_PIN)) {
+        button1Pressed = false;
+        if(currentControllerHand == ControllerHand::Left)
+            gamepad->releaseDPadDirection(XBOX_BUTTON_DPAD_SOUTH);
+        else
+            gamepad->release(XBOX_BUTTON_A);
+    }
+
+    if(!button2Pressed && !MCP.read1(BUTTON_2_PIN)){
+        button2Pressed = true;
+        hapticPulse(160, 100);
+        if(currentControllerHand == ControllerHand::Left)
+            gamepad->pressDPadDirection(XBOX_BUTTON_DPAD_WEST);
+        else
+            gamepad->press(XBOX_BUTTON_X);
+    }  
+    if (button2Pressed && MCP.read1(BUTTON_2_PIN)) {
+        button2Pressed = false;
+        if(currentControllerHand == ControllerHand::Left)
+            gamepad->releaseDPadDirection(XBOX_BUTTON_DPAD_WEST);
+        else
+            gamepad->release(XBOX_BUTTON_X);
+    }
+
+    if(!button3Pressed && !MCP.read1(BUTTON_3_PIN)){
+        button3Pressed = true;
+        hapticPulse(160, 100);
+        if(currentControllerHand == ControllerHand::Left)
+            gamepad->pressDPadDirection(XBOX_BUTTON_DPAD_EAST);
+        else
+            gamepad->press(XBOX_BUTTON_B);
+    } 
+    if (button3Pressed && MCP.read1(BUTTON_3_PIN)) {
+        button3Pressed = false;
+        if(currentControllerHand == ControllerHand::Left)
+            gamepad->releaseDPadDirection(XBOX_BUTTON_DPAD_EAST);
+        else
+            gamepad->release(XBOX_BUTTON_B);
+    }
+
+    if(!button4Pressed && !MCP.read1(BUTTON_4_PIN)){
+        button4Pressed = true;
+        hapticPulse(160, 100);
+        if(currentControllerHand == ControllerHand::Left)
+            gamepad->pressDPadDirection(XBOX_BUTTON_DPAD_NORTH);
+        else
+            gamepad->press(XBOX_BUTTON_Y);
+    } 
+    if (button4Pressed && MCP.read1(BUTTON_4_PIN)) {
+        button4Pressed = false;
+        if(currentControllerHand == ControllerHand::Left)
+            gamepad->releaseDPadDirection(XBOX_BUTTON_DPAD_NORTH);
+        else
+            gamepad->release(XBOX_BUTTON_Y);
+    }
+
+    if(!button5Pressed && !MCP.read1(BUTTON_5_PIN)){
+        button5Pressed = true;
+        hapticPulse(160, 100);
+        gamepad->press((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_LB : XBOX_BUTTON_RB);
+    } 
+    if (button5Pressed && MCP.read1(BUTTON_5_PIN)) {
+        button5Pressed = false;
+        gamepad->release((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_LB : XBOX_BUTTON_RB);
+    }
+
+    if(!button6Pressed && !MCP.read1(BUTTON_6_PIN)){
+        button6Pressed = true;
+        hapticPulse(160, 100);
+        gamepad->press((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_LS : XBOX_BUTTON_RS);
+    }
+    if (button6Pressed && MCP.read1(BUTTON_6_PIN)) {
+        button6Pressed = false;
+        gamepad->release((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_LS : XBOX_BUTTON_RS);
+    }
+
+    if(!button7Pressed && !MCP.read1(BUTTON_7_PIN)){
+        button7Pressed = true;
+        hapticPulse(160, 100);
+        gamepad->press((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_SELECT : XBOX_BUTTON_START);
+    } 
+    if (button7Pressed && MCP.read1(BUTTON_7_PIN)) {
+        button7Pressed = false;
+        gamepad->release((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_SELECT : XBOX_BUTTON_START);
+    }
+
+    if(!button8Pressed && !MCP.read1(BUTTON_8_PIN)){
+        button8Pressed = true;
+        hapticPulse(160, 100);
+        gamepad->press((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_HOME : XBOX_BUTTON_SHARE);
+    }  
+    if (button8Pressed && MCP.read1(BUTTON_8_PIN)) {
+        button8Pressed = false;
+        gamepad->release((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_HOME : XBOX_BUTTON_SHARE);
+    }
+
+    //gamepad->setLeftTrigger(button6Pressed ? 32767 : 0);
+    
+
 /*
     if(MCP.read1(BUTTON_1_PIN) == LOW)
     {
@@ -302,4 +482,36 @@ void loop() {
 */
     // Update the screen
     ui.update();
+}
+
+// Toggles the haptic drive transistor every time it's called
+void hapticTimerInterrupt(bool* hapticState)
+{
+    *hapticState = !(*hapticState);
+    digitalWrite(HAPTIC_PIN, *hapticState);
+}
+
+// Create a pulse at <freq> for <duration> milliseconds
+void hapticPulse(uint16_t freq, uint16_t duration)
+{
+  hapticStart(freq);
+  delay(duration);
+  hapticStop();
+}
+
+// Start driving the haptic at <freq> Hz
+void hapticStart(uint32_t freq)
+{
+    hapticTimer.detach();
+    hapticState = false;
+    float half_interval = 0.5f / freq;
+    hapticTimer.attach(half_interval, hapticTimerInterrupt, &hapticState);
+}
+
+// Stop driving the haptic
+void hapticStop(void)
+{
+  hapticTimer.detach();
+  digitalWrite(HAPTIC_PIN, LOW);
+  hapticState = false;
 }
