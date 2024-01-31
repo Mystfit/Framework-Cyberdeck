@@ -2,6 +2,8 @@
 #include <Ticker.h>
 
 #include "CirqueTrackpad.h"
+#include "Hub.h"
+#include "Spoke.h"
 
 #include <MouseDevice.h>
 #include <XboxGamepadDevice.h>
@@ -14,13 +16,24 @@
 #include "SSD1306.h"
 #include "OLEDDisplayUi.h"
 
-#define MCP_CS_PIN         33
+// Trackpad
 #define TRACKPAD_CS_PIN    32
 #define TRACKPAD_DR_PIN    34
+
+// IMU
 #define IMU_CS_PIN         16
 #define IMU_INTERRUPT_PIN  3
 #define IMU_RESET_PIN      1
 
+// Haptics
+#define HAPTIC_PIN 17
+
+// Trigger
+#define TRIGGER_PIN A0
+
+// IO expander
+#define MCP_CS_PIN         33
+#define SATELLITE_ENABLE_PIN 7
 #define BUTTON_1_PIN 8
 #define BUTTON_2_PIN 9
 #define BUTTON_3_PIN 10
@@ -29,10 +42,6 @@
 #define BUTTON_6_PIN 13
 #define BUTTON_7_PIN 14
 #define BUTTON_8_PIN 15
-
-#define HAPTIC_PIN 17
-
-#define TRIGGER_PIN A0
 
 
 enum class TrackpadMode {
@@ -45,6 +54,10 @@ enum class ControllerHand {
     Right
 };
 
+enum class ConnectionMode {
+    Hub = 0,
+    Spoke
+};
 
 const uint8_t activeSymbol[] PROGMEM = {
     B00000000,
@@ -68,8 +81,6 @@ const uint8_t inactiveSymbol[] PROGMEM = {
     B00000000
 };
 
-TrackpadRelativeData_t lastRelData;
-TrackpadAbsoluteData_t lastAbsData;
 
 // Serial output refresh time
 const long SERIAL_REFRESH_TIME = 8;
@@ -77,13 +88,17 @@ long refresh_time;
 
 // Input devices
 MCP23S17 MCP(MCP_CS_PIN);
+
+// Trackpad
 CirqueTrackpad trackpad(TRACKPAD_CS_PIN, TRACKPAD_DR_PIN);
+TrackpadRelativeData_t lastRelData;
+TrackpadAbsoluteData_t lastAbsData;
 
 // Controller modes
 TrackpadMode currentTrackpadMode = TrackpadMode::Joystick;
 ControllerHand currentControllerHand = ControllerHand::Left;
 
-// Button states
+// Local button states
 bool faceBtnNorthPressed = false;
 bool faceBtnEastPressed = false;
 bool faceBtnSouthPressed = false;
@@ -105,9 +120,9 @@ struct euler_t {
   float roll;
 };
 
-euler_t ypr;
-Adafruit_BNO08x  imu(IMU_RESET_PIN);
-sh2_SensorValue_t imuValue;
+// euler_t ypr;
+// Adafruit_BNO08x  imu(IMU_RESET_PIN);
+// sh2_SensorValue_t imuValue;
 
 // Output devices
 XboxGamepadDevice* gamepad = nullptr;
@@ -117,6 +132,12 @@ BleCompositeHID composite("PicaTTY Controller", "Mystfit", 100);
 // Haptics
 Ticker hapticTimer;
 bool hapticState = false;
+
+// Connection
+ConnectionMode currentConnectionMode = ConnectionMode::Hub;
+Hub* hubController = nullptr;
+Spoke* spokeController = nullptr;
+bool dataUpdated = false;
 
 // Display
 SSD1306Wire display(0x3c, SDA, SCL);  // ADDRESS, SDA, SCL  -  SDA and SCL usually populate automatically based on your board's pins_arduino.h e.g. https://github.com/esp8266/Arduino/blob/master/variants/nodemcu/pins_arduino.h
@@ -180,40 +201,41 @@ float get_trigger_value(int pin, SimpleKalmanFilter& filter){
 }
 
 
-void drawJoystick(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y) {
+void drawLocalJoystick(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y) {
     display->setColor(WHITE);
 
-    int circleHOffset = 25 + x;
+    int circleHOffset = 15 + x;
     int circleVOffset = 32 + y;
 
     int circX = mapint(lastAbsData.xValue, PINNACLE_X_LOWER, PINNACLE_X_UPPER, 32 + 8, 96 - 8);
     int circY = mapint(lastAbsData.yValue, PINNACLE_Y_LOWER, PINNACLE_Y_UPPER, 16, 48);
-
+    
+    // Joystick position
     if(lastAbsData.touchDown)
         display->fillCircle(circX + circleHOffset, circY + y, 12);
     else
         display->drawCircle(64 + circleHOffset, circleVOffset, 12);
 
+    // Outer bounds circle
     display->drawCircle(64 + circleHOffset, circleVOffset,  28);
 
+    // Outer ring for when trackpad is depressed
+    if(trackpadBtnPressed){
+        display->drawCircle(64 + circleHOffset, circleVOffset, 26);
+    }
+
+    // Coordinate text
     String xPrefix = "X:";
     String yPrefix = "Y:";
     String xStr = String(lastAbsData.xValue);
     String yStr = String(lastAbsData.yValue);
-
-    // for(size_t charCount = 4 - xStr.length() + 1; charCount > 0; charCount--){
-    //     xPrefix += " ";
-    // }
-    // for(size_t charCount = 4 - yStr.length() + 1; charCount >=0; charCount--){
-    //     yPrefix += " ";
-    // }
     display->setTextAlignment(TEXT_ALIGN_RIGHT);
     display->setFont(ArialMT_Plain_10);
     display->drawString(128 + x, 0 + y, xPrefix + xStr);
     display->drawString(128 + x, 12 + y, yPrefix + yStr);
 }
 
-FrameCallback frames[] = { drawJoystick };
+FrameCallback frames[] = { drawLocalJoystick };
 int frameCount = 1;
 
 
@@ -249,14 +271,6 @@ void buttonOverlay(OLEDDisplay *display, OLEDDisplayUiState* state) {
         display->drawCircle(faceBtnHOffset + faceBtnDiameter, faceBtnVOffset + faceBtnDiameter, faceBtnRadius);
     }
 
-//
-
-    // if (trackpadBtnPressed){
-    //     display->fillCircle(4, 58, 4);
-    // } else {
-    //     display->drawCircle(4, 58, 4);
-    // }
-
     // Trigger
     display->drawProgressBar(1, 6, 42, 10, int(triggerValue * 100));
 
@@ -277,6 +291,10 @@ void buttonOverlay(OLEDDisplay *display, OLEDDisplayUiState* state) {
     } else {
         display->drawRect(2, 53, 7, 7);
     }
+
+    display->setTextAlignment(TEXT_ALIGN_RIGHT);
+    display->setFont(ArialMT_Plain_10);
+    display->drawString(128, 50, "Mode: " + (currentConnectionMode == ConnectionMode::Hub) ? "Hub" : "Satellite");
 }
 
 
@@ -296,7 +314,6 @@ void OnVibrateEvent(XboxGamepadOutputReportData data)
     Serial.println("Vibration event. Weak motor: " + String(data.weakMotorMagnitude) + " Strong motor: " + String(data.strongMotorMagnitude));
 }
 
-
 void setup() {
     Serial.begin(115200);
 
@@ -314,6 +331,13 @@ void setup() {
     MCP.pinMode1(BUTTON_6_PIN, INPUT_PULLUP);
     MCP.pinMode1(BUTTON_7_PIN, INPUT_PULLUP);
     MCP.pinMode1(BUTTON_8_PIN, INPUT_PULLUP);
+    MCP.pinMode1(SATELLITE_ENABLE_PIN, INPUT_PULLUP);
+    
+    // Use hardware pin to set initial connection mode
+    currentConnectionMode = (MCP.read1(SATELLITE_ENABLE_PIN)) ? ConnectionMode::Hub : ConnectionMode::Spoke;
+    currentControllerHand = (MCP.read1(SATELLITE_ENABLE_PIN)) ? ControllerHand::Right : ControllerHand::Left;
+    Serial.println("Hardware connection mode: " + String((currentConnectionMode == ConnectionMode::Hub) ? "Hub" : "Satellite"));
+    Serial.println("Hardware controller hand: " + String((currentControllerHand == ControllerHand::Left) ? "Left" : "Right"));
 
     // Set up IMU
     // if (!imu.begin_SPI(IMU_CS_PIN, IMU_INTERRUPT_PIN)) {
@@ -330,6 +354,7 @@ void setup() {
     Serial.println("Enabling trackpad");
     trackpad.Init();
     trackpad.EnableFeed(true);
+    delay(100);
 
     if(currentTrackpadMode == TrackpadMode::Joystick)
         trackpad.SetAbsoluteMode();
@@ -357,7 +382,8 @@ void setup() {
 
     // Set up composite HID
     Serial.println("Enabling composite HID");
-    composite.begin(hostConfig);
+    if(currentConnectionMode == ConnectionMode::Hub)
+        composite.begin(hostConfig);
 
     // Set up ui
     // The ESP is capable of rendering 60fps in 80Mhz mode
@@ -391,9 +417,269 @@ void setup() {
 
     // Initialising the UI will init the display too.
     ui.init();
+
+    // Enable satellite controller pairing
+    if(currentConnectionMode == ConnectionMode::Spoke){
+        Serial.println("Enabling spoke controller");
+        spokeController = new Spoke();
+        spokeController->init();
+    } else {
+        Serial.println("Enabling hub controller");
+        hubController = new Hub();
+        hubController->init();
+    }
 }
 
-void loop() {
+void updateLocalButtons(){
+    if(!faceBtnNorthPressed && !MCP.read1(BUTTON_1_PIN)){
+        faceBtnNorthPressed = true;
+        dataUpdated = true;
+        hapticPulse(160, 100);
+        if(currentConnectionMode == ConnectionMode::Hub){
+            if(currentControllerHand == ControllerHand::Left)
+                gamepad->pressDPadDirection(XBOX_BUTTON_DPAD_NORTH);
+            else
+                gamepad->press(XBOX_BUTTON_Y);
+        }
+    } 
+    if (faceBtnNorthPressed && MCP.read1(BUTTON_1_PIN)) {
+        faceBtnNorthPressed = false;
+        dataUpdated = true;
+        if(currentConnectionMode == ConnectionMode::Hub){
+            if(currentControllerHand == ControllerHand::Left)
+                gamepad->releaseDPadDirection(XBOX_BUTTON_DPAD_NORTH);
+            else
+                gamepad->release(XBOX_BUTTON_Y);
+        }
+    }
+
+    if(!faceBtnEastPressed && !MCP.read1(BUTTON_2_PIN)){
+        faceBtnEastPressed = true;
+        dataUpdated = true;
+        hapticPulse(160, 100);
+        if(currentConnectionMode == ConnectionMode::Hub){
+            if(currentControllerHand == ControllerHand::Left)
+                gamepad->pressDPadDirection(XBOX_BUTTON_DPAD_EAST);
+            else
+                gamepad->press(XBOX_BUTTON_B);
+        }
+    }  
+    if (faceBtnEastPressed && MCP.read1(BUTTON_2_PIN)) {
+        faceBtnEastPressed = false;
+        dataUpdated = true;
+        if(currentConnectionMode == ConnectionMode::Hub){
+            if(currentControllerHand == ControllerHand::Left)
+                gamepad->releaseDPadDirection(XBOX_BUTTON_DPAD_EAST);
+            else
+                gamepad->release(XBOX_BUTTON_B);
+        }
+    }
+
+    if(!faceBtnSouthPressed && !MCP.read1(BUTTON_3_PIN)){
+        faceBtnSouthPressed = true;
+        dataUpdated = true;
+        hapticPulse(160, 100);
+        if(currentConnectionMode == ConnectionMode::Hub){
+            if(currentControllerHand == ControllerHand::Left)
+                gamepad->pressDPadDirection(XBOX_BUTTON_DPAD_SOUTH);
+            else
+                gamepad->press(XBOX_BUTTON_A);
+        }
+    } 
+    if (faceBtnSouthPressed && MCP.read1(BUTTON_3_PIN)) {
+        faceBtnSouthPressed = false;
+        dataUpdated = true;
+        if(currentConnectionMode == ConnectionMode::Hub){
+            if(currentControllerHand == ControllerHand::Left)
+                gamepad->releaseDPadDirection(XBOX_BUTTON_DPAD_SOUTH);
+            else
+                gamepad->release(XBOX_BUTTON_A);
+        }
+    }
+
+    if(!faceBtnWestPressed && !MCP.read1(BUTTON_4_PIN)){
+        faceBtnWestPressed = true;
+        dataUpdated = true;
+        hapticPulse(160, 100);
+        if(currentConnectionMode == ConnectionMode::Hub){
+            if(currentControllerHand == ControllerHand::Left)
+                gamepad->pressDPadDirection(XBOX_BUTTON_DPAD_WEST);
+            else
+                gamepad->press(XBOX_BUTTON_X);
+        }
+    } 
+    if (faceBtnWestPressed && MCP.read1(BUTTON_4_PIN)) {
+        faceBtnWestPressed = false;
+        dataUpdated = true;
+        if(currentConnectionMode == ConnectionMode::Hub){
+            if(currentControllerHand == ControllerHand::Left)
+                gamepad->releaseDPadDirection(XBOX_BUTTON_DPAD_WEST);
+            else
+                gamepad->release(XBOX_BUTTON_X);
+        }
+    }
+
+    if(!trackpadBtnPressed && !MCP.read1(BUTTON_5_PIN)){
+        trackpadBtnPressed = true;
+        dataUpdated = true;
+        hapticPulse(160, 100);
+        if(currentConnectionMode == ConnectionMode::Hub)
+            gamepad->press((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_LS : XBOX_BUTTON_RS);
+    } 
+    if (trackpadBtnPressed && MCP.read1(BUTTON_5_PIN)) {
+        trackpadBtnPressed = false;
+        dataUpdated = true;
+        if(currentConnectionMode == ConnectionMode::Hub)
+            gamepad->release((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_LS : XBOX_BUTTON_RS);
+    }
+
+    if(!bumperPressed && !MCP.read1(BUTTON_6_PIN)){
+        bumperPressed = true;
+        dataUpdated = true;
+        hapticPulse(160, 100);
+        if(currentConnectionMode == ConnectionMode::Hub)
+            gamepad->press((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_LB : XBOX_BUTTON_RB);
+    }
+    if (bumperPressed && MCP.read1(BUTTON_6_PIN)) {
+        bumperPressed = false;
+        dataUpdated = true;
+        if(currentConnectionMode == ConnectionMode::Hub)
+            gamepad->release((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_LB : XBOX_BUTTON_RB);
+    }
+
+    if(!menuBtnAPressed && !MCP.read1(BUTTON_7_PIN)){
+        menuBtnAPressed = true;
+        dataUpdated = true;
+        hapticPulse(160, 100);
+        if(currentConnectionMode == ConnectionMode::Hub)
+            gamepad->press((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_SELECT : XBOX_BUTTON_START);
+    } 
+    if (menuBtnAPressed && MCP.read1(BUTTON_7_PIN)) {
+        menuBtnAPressed = false;
+        dataUpdated = true;
+        if(currentConnectionMode == ConnectionMode::Hub)
+            gamepad->release((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_SELECT : XBOX_BUTTON_START);
+    }
+
+    if(!menuBtnBPressed && !MCP.read1(BUTTON_8_PIN)){
+        menuBtnBPressed = true;
+        dataUpdated = true;
+        hapticPulse(160, 100);
+        if(currentConnectionMode == ConnectionMode::Hub)
+            gamepad->press((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_HOME : XBOX_BUTTON_SHARE);
+    }  
+    if (menuBtnBPressed && MCP.read1(BUTTON_8_PIN)) {
+        menuBtnBPressed = false;
+        dataUpdated = true;
+        if(currentConnectionMode == ConnectionMode::Hub)
+            gamepad->release((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_HOME : XBOX_BUTTON_SHARE);
+    }
+}
+
+void updateSatelliteButtons(){
+    if(hubController){
+        auto buttons = hubController->getLastReceivedSatelliteInput().buttons;
+
+        // Press face button north
+        if(buttons & SingleControllerButtons::faceNorth == buttons){
+            Serial.println("Pressing satellite face button north");
+            gamepad->pressDPadDirection(XBOX_BUTTON_DPAD_SOUTH);
+        }
+
+        // Release face button north
+        if(buttons & SingleControllerButtons::faceNorth == 0){
+            Serial.println("Releasing satellite face button north");
+            if(gamepad->isDPadPressed(XBOX_BUTTON_DPAD_NORTH))
+                gamepad->releaseDPadDirection(XBOX_BUTTON_DPAD_NORTH);
+        }
+
+        // Press face button east
+        if(buttons & SingleControllerButtons::faceEast == buttons){
+            Serial.println("Pressing satellite face button east");
+            gamepad->pressDPadDirection(XBOX_BUTTON_DPAD_EAST);
+        }
+
+        // Release face button east
+        if(buttons & SingleControllerButtons::faceEast == 0){
+            Serial.println("Releasing satellite face button east");
+            gamepad->releaseDPadDirection(XBOX_BUTTON_DPAD_EAST);
+        }
+
+        // Press face button south
+        if(buttons & SingleControllerButtons::faceSouth == buttons){
+            Serial.println("Pressing satellite face button south");
+            gamepad->pressDPadDirection(XBOX_BUTTON_DPAD_NORTH);
+        }
+
+        // Release face button south
+        if(buttons & SingleControllerButtons::faceSouth == 0){
+            Serial.println("Releasing satellite face button south");
+            gamepad->releaseDPadDirection(XBOX_BUTTON_DPAD_NORTH);
+        }
+
+        // Press face button west
+        if(buttons & SingleControllerButtons::faceWest == buttons){
+            Serial.println("Pressing satellite face button west");
+            gamepad->pressDPadDirection(XBOX_BUTTON_DPAD_WEST);
+        }
+
+        // Release face button west
+        if(buttons & SingleControllerButtons::faceWest == 0){
+            Serial.println("Releasing satellite face button west");
+            gamepad->releaseDPadDirection(XBOX_BUTTON_DPAD_WEST);
+        }
+
+        // Press trackpad button
+        if(buttons & SingleControllerButtons::trackpadBtn == buttons){
+            Serial.println("Pressing satellite trackpad button");
+            gamepad->press((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_LS : XBOX_BUTTON_RS);
+        }
+
+        // Release trackpad button
+        if(buttons & SingleControllerButtons::trackpadBtn == 0){
+            Serial.println("Releasing satellite trackpad button");
+            gamepad->release((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_LS : XBOX_BUTTON_RS);
+        }
+
+        // Press bumper
+        if(buttons & SingleControllerButtons::bumper == buttons){
+            Serial.println("Pressing satellite bumper");
+            gamepad->press((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_LB : XBOX_BUTTON_RB);
+        }
+
+        // Release bumper
+        if(buttons & SingleControllerButtons::bumper == 0){
+            Serial.println("Releasing satellite bumper");
+            gamepad->release((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_LB : XBOX_BUTTON_RB);
+        }
+
+        // Press menu button A
+        if(buttons & SingleControllerButtons::menuA == buttons){
+            Serial.println("Pressing satellite menu button A");
+            gamepad->press((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_SELECT : XBOX_BUTTON_START);
+        }
+
+        // Release menu button A
+        if(buttons & SingleControllerButtons::menuA == 0){
+            Serial.println("Releasing satellite menu button A");
+            gamepad->release((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_SELECT : XBOX_BUTTON_START);
+        }
+
+        // Press menu button B
+        if(buttons & SingleControllerButtons::menuB == buttons){
+            Serial.println("Pressing satellite menu button B");
+            gamepad->press((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_HOME : XBOX_BUTTON_SHARE);
+        }
+
+        // Release menu button B
+        if(buttons & SingleControllerButtons::menuB == 0){
+            Serial.println("Releasing satellite menu button B");
+            gamepad->release((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_HOME : XBOX_BUTTON_SHARE);
+        }
+    }
+}
+
+void updateLocalTrackpad(){
     if(trackpad.DataReady())
     {
         TrackpadRelativeData_t relData;
@@ -401,8 +687,6 @@ void loop() {
 
         // Update serial debug
         if(millis() > refresh_time){
-            // Update the trigger from the hall sensor
-
             if(currentTrackpadMode == TrackpadMode::Joystick)
             {
                 trackpad.GetAbsolute(&absData);
@@ -446,8 +730,36 @@ void loop() {
         
             refresh_time = millis() + SERIAL_REFRESH_TIME;
         }
-    }
 
+        dataUpdated = true;
+    }
+}
+
+void updateSatelliteTrackpad(){
+    if(hubController){
+        if(hubController->isDataReady()){
+
+            int x = mapint(hubController->getLastReceivedSatelliteInput().x, PINNACLE_X_LOWER, PINNACLE_X_UPPER, -32767, 32767);
+            int y = mapint(hubController->getLastReceivedSatelliteInput().y, PINNACLE_Y_LOWER, PINNACLE_Y_UPPER, -32767, 32767);
+
+            if(currentTrackpadMode == TrackpadMode::Joystick){
+                Serial.print("Satellite Absolute X: ");
+                Serial.print(x);
+                Serial.print(" Y: ");
+                Serial.println(y);
+            }
+
+            // The satellite controller will be in the opposite hand to the hub controller
+            if(currentControllerHand == ControllerHand::Left){
+                gamepad->setRightThumb(x, y);
+            } else {
+                gamepad->setLeftThumb(x, y);
+            }
+        }
+    }
+}
+
+void updateLocalTrigger(){
     // Update trigger
     triggerValue = get_trigger_value(TRIGGER_PIN, triggerKalmanFilter);
     if(triggerValue > lastTriggerValue + 0.01 || triggerValue < lastTriggerValue - 0.01){
@@ -458,122 +770,21 @@ void loop() {
         else
             gamepad->setRightTrigger(mapped_trigger);
         lastTriggerValue = triggerValue;
+        dataUpdated = true;
     }
+}
 
-    // Update buttons
-    // faceBtnNorthPressed = !MCP.read1(BUTTON_1_PIN);
-    // faceBtnEastPressed = !MCP.read1(BUTTON_2_PIN);
-    // faceBtnSouthPressed = !MCP.read1(BUTTON_3_PIN);
-    // faceBtnWestPressed = !MCP.read1(BUTTON_4_PIN);
-    // trackpadBtnPressed = !MCP.read1(BUTTON_5_PIN);
-    // bumperPressed = !MCP.read1(BUTTON_6_PIN);
-    // menuBtnAPressed = !MCP.read1(BUTTON_7_PIN);
-    // menuBtnBPressed = !MCP.read1(BUTTON_8_PIN);
-
-    if(!faceBtnNorthPressed && !MCP.read1(BUTTON_1_PIN)){
-        faceBtnNorthPressed = true;
-        hapticPulse(160, 100);
+void updateSatelliteTrigger(){
+    if(hubController){
+        auto trigger = hubController->getLastReceivedSatelliteInput().trigger;
         if(currentControllerHand == ControllerHand::Left)
-            gamepad->pressDPadDirection(XBOX_BUTTON_DPAD_SOUTH);
+            gamepad->setLeftTrigger(trigger);
         else
-            gamepad->press(XBOX_BUTTON_A);
-    } 
-    if (faceBtnNorthPressed && MCP.read1(BUTTON_1_PIN)) {
-        faceBtnNorthPressed = false;
-        if(currentControllerHand == ControllerHand::Left)
-            gamepad->releaseDPadDirection(XBOX_BUTTON_DPAD_SOUTH);
-        else
-            gamepad->release(XBOX_BUTTON_A);
+            gamepad->setRightTrigger(trigger);
     }
+}
 
-    if(!faceBtnEastPressed && !MCP.read1(BUTTON_2_PIN)){
-        faceBtnEastPressed = true;
-        hapticPulse(160, 100);
-        if(currentControllerHand == ControllerHand::Left)
-            gamepad->pressDPadDirection(XBOX_BUTTON_DPAD_WEST);
-        else
-            gamepad->press(XBOX_BUTTON_X);
-    }  
-    if (faceBtnEastPressed && MCP.read1(BUTTON_2_PIN)) {
-        faceBtnEastPressed = false;
-        if(currentControllerHand == ControllerHand::Left)
-            gamepad->releaseDPadDirection(XBOX_BUTTON_DPAD_WEST);
-        else
-            gamepad->release(XBOX_BUTTON_X);
-    }
-
-    if(!faceBtnSouthPressed && !MCP.read1(BUTTON_3_PIN)){
-        faceBtnSouthPressed = true;
-        hapticPulse(160, 100);
-        if(currentControllerHand == ControllerHand::Left)
-            gamepad->pressDPadDirection(XBOX_BUTTON_DPAD_EAST);
-        else
-            gamepad->press(XBOX_BUTTON_B);
-    } 
-    if (faceBtnSouthPressed && MCP.read1(BUTTON_3_PIN)) {
-        faceBtnSouthPressed = false;
-        if(currentControllerHand == ControllerHand::Left)
-            gamepad->releaseDPadDirection(XBOX_BUTTON_DPAD_EAST);
-        else
-            gamepad->release(XBOX_BUTTON_B);
-    }
-
-    if(!faceBtnWestPressed && !MCP.read1(BUTTON_4_PIN)){
-        faceBtnWestPressed = true;
-        hapticPulse(160, 100);
-        if(currentControllerHand == ControllerHand::Left)
-            gamepad->pressDPadDirection(XBOX_BUTTON_DPAD_NORTH);
-        else
-            gamepad->press(XBOX_BUTTON_Y);
-    } 
-    if (faceBtnWestPressed && MCP.read1(BUTTON_4_PIN)) {
-        faceBtnWestPressed = false;
-        if(currentControllerHand == ControllerHand::Left)
-            gamepad->releaseDPadDirection(XBOX_BUTTON_DPAD_NORTH);
-        else
-            gamepad->release(XBOX_BUTTON_Y);
-    }
-
-    if(!trackpadBtnPressed && !MCP.read1(BUTTON_5_PIN)){
-        trackpadBtnPressed = true;
-        hapticPulse(160, 100);
-        gamepad->press((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_LB : XBOX_BUTTON_RB);
-    } 
-    if (trackpadBtnPressed && MCP.read1(BUTTON_5_PIN)) {
-        trackpadBtnPressed = false;
-        gamepad->release((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_LB : XBOX_BUTTON_RB);
-    }
-
-    if(!bumperPressed && !MCP.read1(BUTTON_6_PIN)){
-        bumperPressed = true;
-        hapticPulse(160, 100);
-        gamepad->press((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_LS : XBOX_BUTTON_RS);
-    }
-    if (bumperPressed && MCP.read1(BUTTON_6_PIN)) {
-        bumperPressed = false;
-        gamepad->release((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_LS : XBOX_BUTTON_RS);
-    }
-
-    if(!menuBtnAPressed && !MCP.read1(BUTTON_7_PIN)){
-        menuBtnAPressed = true;
-        hapticPulse(160, 100);
-        gamepad->press((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_SELECT : XBOX_BUTTON_START);
-    } 
-    if (menuBtnAPressed && MCP.read1(BUTTON_7_PIN)) {
-        menuBtnAPressed = false;
-        gamepad->release((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_SELECT : XBOX_BUTTON_START);
-    }
-
-    if(!menuBtnBPressed && !MCP.read1(BUTTON_8_PIN)){
-        menuBtnBPressed = true;
-        hapticPulse(160, 100);
-        gamepad->press((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_HOME : XBOX_BUTTON_SHARE);
-    }  
-    if (menuBtnBPressed && MCP.read1(BUTTON_8_PIN)) {
-        menuBtnBPressed = false;
-        gamepad->release((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_HOME : XBOX_BUTTON_SHARE);
-    }
-
+void loop() {
     // Get IMU values
     // if (imu.wasReset()) {
     //     Serial.print("sensor was reset ");
@@ -584,9 +795,32 @@ void loop() {
     //     quaternionToEulerRV(&imuValue.un.arvrStabilizedRV, &ypr, true);
     //     Serial.println("Yaw: " + String(ypr.yaw) + " Pitch: " + String(ypr.pitch) + " Roll: " + String(ypr.roll));
     // }
+
+    updateLocalButtons();
+    updateLocalTrackpad();
+    updateLocalTrigger();
+
+    if(currentConnectionMode == ConnectionMode::Hub)
+    {
+        if(hubController){
+            hubController->update();
+            updateSatelliteButtons();
+            updateSatelliteTrackpad();
+            updateSatelliteTrigger();
+            hubController->consumeInputData();
+        }
+        
+    } else {
+        if(spokeController){
+            if(dataUpdated)
+                spokeController->notifyHub(getPackedGamepadState());    
+        }
+    }
     
     // Update the screen
     ui.update();
+
+    dataUpdated = false;
 
     delay(8);
 }
@@ -621,4 +855,24 @@ void hapticStop(void)
   hapticTimer.detach();
   digitalWrite(HAPTIC_PIN, LOW);
   hapticState = false;
+}
+
+PackedGamepadInputState getPackedGamepadState(){
+    PackedGamepadInputState state;
+
+    state.buttons |= (faceBtnNorthPressed) ? SingleControllerButtons::faceNorth : 0x0000;
+    state.buttons |= (faceBtnEastPressed) ? SingleControllerButtons::faceEast : 0x0000;
+    state.buttons |= (faceBtnSouthPressed) ? SingleControllerButtons::faceSouth : 0x0000;
+    state.buttons |= (faceBtnWestPressed) ? SingleControllerButtons::faceWest : 0x0000;
+    state.buttons |= (trackpadBtnPressed) ? SingleControllerButtons::trackpadBtn : 0x0000;
+    state.buttons |= (bumperPressed) ? SingleControllerButtons::bumper : 0x0000;
+    state.buttons |= (menuBtnAPressed) ? SingleControllerButtons::menuA : 0x0000;
+    state.buttons |= (menuBtnBPressed) ? SingleControllerButtons::menuB : 0x0000;
+
+    state.x = lastAbsData.xValue;
+    state.y = lastAbsData.yValue;
+    state.z = lastAbsData.zValue;
+    state.trigger = int16_t(triggerValue * 32767);
+
+    return state;
 }
