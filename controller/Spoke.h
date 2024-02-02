@@ -1,6 +1,7 @@
 #pragma once
 
 #include <NimBLEDevice.h>
+#include "CirqueTrackpad.h"
 
 #define SATELLITE_SERVICE "5A00"
 #define SATELLITE_INPUT_CHARACTERISTIC "5A10"
@@ -14,17 +15,21 @@ enum SingleControllerButtons : uint16_t{
     faceSouth = 0x0004,
     faceWest = 0x0008,
     trackpadBtn = 0x0010,
-    bumper = 0x0020,
-    menuA = 0x0040,
-    menuB = 0x0080
+    trackpadTouched = 0x0020,
+    triggerTouched = 0x0040,
+    bumper = 0x0080,
+    menuA = 0x0100,
+    menuB = 0x0200
 };
 
 struct PackedGamepadInputState {
-    uint16_t buttons;
-    uint16_t x;
-    uint16_t y;
-    uint16_t z;
-    uint16_t trigger;
+    uint16_t buttons = 0x0000;
+    // int16_t x = 0;
+    // int16_t y = 0;
+    // int16_t z = 0;
+    TrackpadAbsoluteData_t absTrackpadData;
+    TrackpadRelativeData_t relTrackpadData;
+    uint16_t trigger = 0;
 };
 
 struct PackedGamepadOutputState {

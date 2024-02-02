@@ -16,7 +16,8 @@ Hub::Hub() :
     _advDevice(nullptr),
     _doConnect(false),
     _scanTime(0),
-    _dataReady(false)
+    _dataReady(false),
+    _lastReceviedSatelliteInput()
 {
 }
 

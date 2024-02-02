@@ -111,6 +111,8 @@ bool menuBtnBPressed = false;
 // Trigger
 float triggerValue = 0.0f;
 float lastTriggerValue = 0.0f;
+bool satelliteTriggerTouched = false;
+
 SimpleKalmanFilter triggerKalmanFilter(0.2f, 0.2f, 0.01);
 
 // IMU
@@ -431,13 +433,15 @@ void setup() {
 }
 
 void updateLocalButtons(){
+    XboxDpadFlags dPadDirection = XboxDpadFlags::NONE;
+
     if(!faceBtnNorthPressed && !MCP.read1(BUTTON_1_PIN)){
         faceBtnNorthPressed = true;
         dataUpdated = true;
         hapticPulse(160, 100);
         if(currentConnectionMode == ConnectionMode::Hub){
             if(currentControllerHand == ControllerHand::Left)
-                gamepad->pressDPadDirection(XBOX_BUTTON_DPAD_NORTH);
+                dPadDirection = (XboxDpadFlags)((uint8_t)dPadDirection | (uint8_t)XboxDpadFlags::NORTH);
             else
                 gamepad->press(XBOX_BUTTON_Y);
         }
@@ -447,7 +451,7 @@ void updateLocalButtons(){
         dataUpdated = true;
         if(currentConnectionMode == ConnectionMode::Hub){
             if(currentControllerHand == ControllerHand::Left)
-                gamepad->releaseDPadDirection(XBOX_BUTTON_DPAD_NORTH);
+                dPadDirection = (XboxDpadFlags)((uint8_t)dPadDirection & ~(uint8_t)XboxDpadFlags::NORTH);
             else
                 gamepad->release(XBOX_BUTTON_Y);
         }
@@ -459,7 +463,7 @@ void updateLocalButtons(){
         hapticPulse(160, 100);
         if(currentConnectionMode == ConnectionMode::Hub){
             if(currentControllerHand == ControllerHand::Left)
-                gamepad->pressDPadDirection(XBOX_BUTTON_DPAD_EAST);
+                dPadDirection = (XboxDpadFlags)((uint8_t)dPadDirection | (uint8_t)XboxDpadFlags::EAST);
             else
                 gamepad->press(XBOX_BUTTON_B);
         }
@@ -469,7 +473,7 @@ void updateLocalButtons(){
         dataUpdated = true;
         if(currentConnectionMode == ConnectionMode::Hub){
             if(currentControllerHand == ControllerHand::Left)
-                gamepad->releaseDPadDirection(XBOX_BUTTON_DPAD_EAST);
+                dPadDirection = (XboxDpadFlags)((uint8_t)dPadDirection & ~(uint8_t)XboxDpadFlags::EAST);
             else
                 gamepad->release(XBOX_BUTTON_B);
         }
@@ -481,7 +485,7 @@ void updateLocalButtons(){
         hapticPulse(160, 100);
         if(currentConnectionMode == ConnectionMode::Hub){
             if(currentControllerHand == ControllerHand::Left)
-                gamepad->pressDPadDirection(XBOX_BUTTON_DPAD_SOUTH);
+                dPadDirection = (XboxDpadFlags)((uint8_t)dPadDirection | (uint8_t)XboxDpadFlags::SOUTH);
             else
                 gamepad->press(XBOX_BUTTON_A);
         }
@@ -491,7 +495,7 @@ void updateLocalButtons(){
         dataUpdated = true;
         if(currentConnectionMode == ConnectionMode::Hub){
             if(currentControllerHand == ControllerHand::Left)
-                gamepad->releaseDPadDirection(XBOX_BUTTON_DPAD_SOUTH);
+               dPadDirection = (XboxDpadFlags)((uint8_t)dPadDirection & ~(uint8_t)XboxDpadFlags::SOUTH);
             else
                 gamepad->release(XBOX_BUTTON_A);
         }
@@ -503,7 +507,7 @@ void updateLocalButtons(){
         hapticPulse(160, 100);
         if(currentConnectionMode == ConnectionMode::Hub){
             if(currentControllerHand == ControllerHand::Left)
-                gamepad->pressDPadDirection(XBOX_BUTTON_DPAD_WEST);
+                dPadDirection = (XboxDpadFlags)((uint8_t)dPadDirection | (uint8_t)XboxDpadFlags::WEST);
             else
                 gamepad->press(XBOX_BUTTON_X);
         }
@@ -513,12 +517,18 @@ void updateLocalButtons(){
         dataUpdated = true;
         if(currentConnectionMode == ConnectionMode::Hub){
             if(currentControllerHand == ControllerHand::Left)
-                gamepad->releaseDPadDirection(XBOX_BUTTON_DPAD_WEST);
+                dPadDirection = (XboxDpadFlags)((uint8_t)dPadDirection & ~(uint8_t)XboxDpadFlags::WEST);
             else
                 gamepad->release(XBOX_BUTTON_X);
         }
     }
 
+    // Update Dpad
+    if(currentConnectionMode == ConnectionMode::Hub){
+        if(currentControllerHand == ControllerHand::Left)
+            gamepad->pressDPadDirectionFlag(dPadDirection);
+    }
+    
     if(!trackpadBtnPressed && !MCP.read1(BUTTON_5_PIN)){
         trackpadBtnPressed = true;
         dataUpdated = true;
@@ -579,102 +589,164 @@ void updateLocalButtons(){
 void updateSatelliteButtons(){
     if(hubController){
         auto buttons = hubController->getLastReceivedSatelliteInput().buttons;
+        XboxDpadFlags dPadDirection;
 
         // Press face button north
-        if(buttons & SingleControllerButtons::faceNorth == buttons){
-            Serial.println("Pressing satellite face button north");
-            gamepad->pressDPadDirection(XBOX_BUTTON_DPAD_SOUTH);
+        if((buttons & SingleControllerButtons::faceNorth) == SingleControllerButtons::faceNorth){
+            if(currentControllerHand == ControllerHand::Right){
+                dPadDirection = (XboxDpadFlags)((uint8_t)dPadDirection | (uint8_t)XboxDpadFlags::NORTH);
+
+            } else {
+                if(!gamepad->isPressed(XBOX_BUTTON_Y)){
+                    Serial.println("Pressing satellite Y button");
+                    gamepad->press(XBOX_BUTTON_Y);
+                }
+            }
         }
 
         // Release face button north
-        if(buttons & SingleControllerButtons::faceNorth == 0){
-            Serial.println("Releasing satellite face button north");
-            if(gamepad->isDPadPressed(XBOX_BUTTON_DPAD_NORTH))
-                gamepad->releaseDPadDirection(XBOX_BUTTON_DPAD_NORTH);
+        if((buttons & SingleControllerButtons::faceNorth) == 0){
+            if(currentControllerHand == ControllerHand::Left){
+                if(gamepad->isPressed(XBOX_BUTTON_Y)){
+                    Serial.println("Releasing satellite Y button");
+                    gamepad->release(XBOX_BUTTON_Y);
+                }
+            }
         }
 
         // Press face button east
-        if(buttons & SingleControllerButtons::faceEast == buttons){
-            Serial.println("Pressing satellite face button east");
-            gamepad->pressDPadDirection(XBOX_BUTTON_DPAD_EAST);
+        if((buttons & SingleControllerButtons::faceEast) == SingleControllerButtons::faceEast){
+            if(currentControllerHand == ControllerHand::Right){
+                dPadDirection = (XboxDpadFlags)((uint8_t)dPadDirection | (uint8_t)XboxDpadFlags::EAST);
+            } else {
+                if(!gamepad->isPressed(XBOX_BUTTON_B)){
+                    Serial.println("Pressing satellite B button");
+                    gamepad->press(XBOX_BUTTON_B);
+                }
+            }
         }
 
         // Release face button east
-        if(buttons & SingleControllerButtons::faceEast == 0){
-            Serial.println("Releasing satellite face button east");
-            gamepad->releaseDPadDirection(XBOX_BUTTON_DPAD_EAST);
+        if((buttons & SingleControllerButtons::faceEast) == 0){
+            if(currentControllerHand == ControllerHand::Left){
+                if(gamepad->isPressed(XBOX_BUTTON_B)){
+                    Serial.println("Releasing satellite B button");
+                    gamepad->release(XBOX_BUTTON_B);
+                }
+            }
         }
 
         // Press face button south
-        if(buttons & SingleControllerButtons::faceSouth == buttons){
-            Serial.println("Pressing satellite face button south");
-            gamepad->pressDPadDirection(XBOX_BUTTON_DPAD_NORTH);
+        if((buttons & SingleControllerButtons::faceSouth) == SingleControllerButtons::faceSouth){
+            if(currentControllerHand == ControllerHand::Right){
+                dPadDirection = (XboxDpadFlags)((uint8_t)dPadDirection | (uint8_t)XboxDpadFlags::SOUTH);
+            } else {
+                if(!gamepad->isPressed(XBOX_BUTTON_A)){
+                    Serial.println("Pressing satellite A button");
+                    gamepad->press(XBOX_BUTTON_A);
+                }
+            }
         }
 
         // Release face button south
-        if(buttons & SingleControllerButtons::faceSouth == 0){
-            Serial.println("Releasing satellite face button south");
-            gamepad->releaseDPadDirection(XBOX_BUTTON_DPAD_NORTH);
+        if((buttons & SingleControllerButtons::faceSouth) == 0){
+            if(currentControllerHand == ControllerHand::Left){
+                if(gamepad->isPressed(XBOX_BUTTON_A)){
+                    Serial.println("Releasing satellite button A");
+                    gamepad->release(XBOX_BUTTON_A);
+                }
+            }
         }
 
         // Press face button west
-        if(buttons & SingleControllerButtons::faceWest == buttons){
-            Serial.println("Pressing satellite face button west");
-            gamepad->pressDPadDirection(XBOX_BUTTON_DPAD_WEST);
+        if((buttons & SingleControllerButtons::faceWest) == SingleControllerButtons::faceWest){
+            if(currentControllerHand == ControllerHand::Right){
+                dPadDirection = (XboxDpadFlags)((uint8_t)dPadDirection | (uint8_t)XboxDpadFlags::WEST);
+            } else {
+                if(!gamepad->isPressed(XBOX_BUTTON_X)){
+                    Serial.println("Pressing satellite X button");
+                    gamepad->press(XBOX_BUTTON_X);
+                }
+            }
         }
 
         // Release face button west
-        if(buttons & SingleControllerButtons::faceWest == 0){
-            Serial.println("Releasing satellite face button west");
-            gamepad->releaseDPadDirection(XBOX_BUTTON_DPAD_WEST);
+        if((buttons & SingleControllerButtons::faceWest) == 0){
+            if(currentControllerHand == ControllerHand::Left){
+                if(gamepad->isPressed(XBOX_BUTTON_X)){
+                    Serial.println("Releasing satellite X button");
+                    gamepad->release(XBOX_BUTTON_X);
+                }
+            }
+        }
+
+        // Update Dpad
+        if(currentControllerHand == ControllerHand::Right){
+            gamepad->pressDPadDirectionFlag(dPadDirection);
         }
 
         // Press trackpad button
-        if(buttons & SingleControllerButtons::trackpadBtn == buttons){
-            Serial.println("Pressing satellite trackpad button");
-            gamepad->press((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_LS : XBOX_BUTTON_RS);
+        if((buttons & SingleControllerButtons::trackpadBtn) == SingleControllerButtons::trackpadBtn){
+            if(!gamepad->isPressed((currentControllerHand == ControllerHand::Right) ? XBOX_BUTTON_LS : XBOX_BUTTON_RS)){
+                Serial.println(String("Pressing satellite ") + String((currentControllerHand == ControllerHand::Right) ? "left stick" : "right stick"));
+                gamepad->press((currentControllerHand == ControllerHand::Right) ? XBOX_BUTTON_LS : XBOX_BUTTON_RS);
+            }
         }
 
         // Release trackpad button
-        if(buttons & SingleControllerButtons::trackpadBtn == 0){
-            Serial.println("Releasing satellite trackpad button");
-            gamepad->release((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_LS : XBOX_BUTTON_RS);
+        if((buttons & SingleControllerButtons::trackpadBtn) == 0){
+            if(gamepad->isPressed((currentControllerHand == ControllerHand::Right) ? XBOX_BUTTON_LS : XBOX_BUTTON_RS)){
+                Serial.println(String("Releasing satellite ") + String((currentControllerHand == ControllerHand::Right) ? "left stick" : "right stick"));
+                gamepad->release((currentControllerHand == ControllerHand::Right) ? XBOX_BUTTON_LS : XBOX_BUTTON_RS);
+            }
         }
 
         // Press bumper
-        if(buttons & SingleControllerButtons::bumper == buttons){
-            Serial.println("Pressing satellite bumper");
-            gamepad->press((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_LB : XBOX_BUTTON_RB);
+        if((buttons & SingleControllerButtons::bumper) == SingleControllerButtons::bumper){
+            if(!gamepad->isPressed((currentControllerHand == ControllerHand::Right) ? XBOX_BUTTON_LB : XBOX_BUTTON_RB)){
+                Serial.println("Pressing satellite  " + String((currentControllerHand == ControllerHand::Right) ? "left bumper" : "right bumper"));
+                gamepad->press((currentControllerHand == ControllerHand::Right) ? XBOX_BUTTON_LB : XBOX_BUTTON_RB);
+            }
         }
 
         // Release bumper
-        if(buttons & SingleControllerButtons::bumper == 0){
-            Serial.println("Releasing satellite bumper");
-            gamepad->release((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_LB : XBOX_BUTTON_RB);
+        if((buttons & SingleControllerButtons::bumper) == 0){
+            if(gamepad->isPressed((currentControllerHand == ControllerHand::Right) ? XBOX_BUTTON_LB : XBOX_BUTTON_RB)){
+                Serial.println("Releasing satellite  " + String((currentControllerHand == ControllerHand::Right) ? "left bumper" : "right bumper"));
+                gamepad->release((currentControllerHand == ControllerHand::Right) ? XBOX_BUTTON_LB : XBOX_BUTTON_RB);
+            }
         }
 
         // Press menu button A
-        if(buttons & SingleControllerButtons::menuA == buttons){
-            Serial.println("Pressing satellite menu button A");
-            gamepad->press((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_SELECT : XBOX_BUTTON_START);
+        if((buttons & SingleControllerButtons::menuA) == SingleControllerButtons::menuA){
+            if(!gamepad->isPressed((currentControllerHand == ControllerHand::Right) ? XBOX_BUTTON_SELECT : XBOX_BUTTON_START)){
+                Serial.println("Pressing satellite " + String((currentControllerHand == ControllerHand::Right) ? "select" : "start"));
+                gamepad->press((currentControllerHand == ControllerHand::Right) ? XBOX_BUTTON_SELECT : XBOX_BUTTON_START);
+            }
         }
 
         // Release menu button A
-        if(buttons & SingleControllerButtons::menuA == 0){
-            Serial.println("Releasing satellite menu button A");
-            gamepad->release((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_SELECT : XBOX_BUTTON_START);
+        if((buttons & SingleControllerButtons::menuA) == 0){
+            if(gamepad->isPressed((currentControllerHand == ControllerHand::Right) ? XBOX_BUTTON_SELECT : XBOX_BUTTON_START)){
+                Serial.println("Releasing satellite " + String((currentControllerHand == ControllerHand::Right) ? "select" : "start"));
+                gamepad->release((currentControllerHand == ControllerHand::Right) ? XBOX_BUTTON_SELECT : XBOX_BUTTON_START);
+            }
         }
 
         // Press menu button B
-        if(buttons & SingleControllerButtons::menuB == buttons){
-            Serial.println("Pressing satellite menu button B");
-            gamepad->press((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_HOME : XBOX_BUTTON_SHARE);
+        if((buttons & SingleControllerButtons::menuB) == SingleControllerButtons::menuB){
+            if(!gamepad->isPressed((currentControllerHand == ControllerHand::Right) ? XBOX_BUTTON_HOME : XBOX_BUTTON_SHARE)){
+                Serial.println("Pressing satellite " + String((currentControllerHand == ControllerHand::Right) ? "home" : "share"));
+                gamepad->press((currentControllerHand == ControllerHand::Right) ? XBOX_BUTTON_HOME : XBOX_BUTTON_SHARE);
+            }
         }
 
         // Release menu button B
-        if(buttons & SingleControllerButtons::menuB == 0){
-            Serial.println("Releasing satellite menu button B");
-            gamepad->release((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_HOME : XBOX_BUTTON_SHARE);
+        if((buttons & SingleControllerButtons::menuB) == 0){
+            if(gamepad->isPressed((currentControllerHand == ControllerHand::Right) ? XBOX_BUTTON_HOME : XBOX_BUTTON_SHARE)){
+                Serial.println("Releasing satellite " + String((currentControllerHand == ControllerHand::Right) ? "home" : "share"));
+                gamepad->release((currentControllerHand == ControllerHand::Right) ? XBOX_BUTTON_HOME : XBOX_BUTTON_SHARE);
+            }
         }
     }
 }
@@ -738,15 +810,19 @@ void updateLocalTrackpad(){
 void updateSatelliteTrackpad(){
     if(hubController){
         if(hubController->isDataReady()){
-
-            int x = mapint(hubController->getLastReceivedSatelliteInput().x, PINNACLE_X_LOWER, PINNACLE_X_UPPER, -32767, 32767);
-            int y = mapint(hubController->getLastReceivedSatelliteInput().y, PINNACLE_Y_LOWER, PINNACLE_Y_UPPER, -32767, 32767);
+            int x = mapint(hubController->getLastReceivedSatelliteInput().absTrackpadData.xValue, PINNACLE_X_LOWER, PINNACLE_X_UPPER, -32767, 32767);
+            int y = mapint(hubController->getLastReceivedSatelliteInput().absTrackpadData.yValue, PINNACLE_Y_LOWER, PINNACLE_Y_UPPER, -32767, 32767);
 
             if(currentTrackpadMode == TrackpadMode::Joystick){
-                Serial.print("Satellite Absolute X: ");
-                Serial.print(x);
-                Serial.print(" Y: ");
-                Serial.println(y);
+                if(hubController->getLastReceivedSatelliteInput().absTrackpadData.touchDown){
+                    Serial.print("Satellite Absolute X: ");
+                    Serial.print(x);
+                    Serial.print(" Y: ");
+                    Serial.println(y);
+                } else {
+                    x = 0;
+                    y = 0;
+                }
             }
 
             // The satellite controller will be in the opposite hand to the hub controller
@@ -763,24 +839,33 @@ void updateLocalTrigger(){
     // Update trigger
     triggerValue = get_trigger_value(TRIGGER_PIN, triggerKalmanFilter);
     if(triggerValue > lastTriggerValue + 0.01 || triggerValue < lastTriggerValue - 0.01){
+        satelliteTriggerTouched = true;
         Serial.println("Trigger: " + String(triggerValue));
-        int16_t mapped_trigger = constrain(int16_t(triggerValue * 32767), 0, SHRT_MAX);
+        int16_t mapped_trigger = constrain(int16_t(triggerValue * XBOX_TRIGGER_MAX), 0, XBOX_TRIGGER_MAX);
         if(currentControllerHand == ControllerHand::Left)
             gamepad->setLeftTrigger(mapped_trigger);
         else
             gamepad->setRightTrigger(mapped_trigger);
         lastTriggerValue = triggerValue;
         dataUpdated = true;
+    } else {
+        if(satelliteTriggerTouched){
+            satelliteTriggerTouched = false;
+            dataUpdated = true;
+        }
     }
 }
 
 void updateSatelliteTrigger(){
     if(hubController){
-        auto trigger = hubController->getLastReceivedSatelliteInput().trigger;
-        if(currentControllerHand == ControllerHand::Left)
-            gamepad->setLeftTrigger(trigger);
-        else
-            gamepad->setRightTrigger(trigger);
+        if((hubController->getLastReceivedSatelliteInput().buttons & SingleControllerButtons::triggerTouched) == SingleControllerButtons::triggerTouched){
+            auto triggerValue = hubController->getLastReceivedSatelliteInput().trigger;
+            Serial.println("Satellite trigger touched: " + String(triggerValue));
+            if(currentControllerHand == ControllerHand::Right)
+                gamepad->setLeftTrigger(triggerValue);
+            else
+                gamepad->setRightTrigger(triggerValue);
+        }
     }
 }
 
@@ -860,19 +945,61 @@ void hapticStop(void)
 PackedGamepadInputState getPackedGamepadState(){
     PackedGamepadInputState state;
 
-    state.buttons |= (faceBtnNorthPressed) ? SingleControllerButtons::faceNorth : 0x0000;
-    state.buttons |= (faceBtnEastPressed) ? SingleControllerButtons::faceEast : 0x0000;
-    state.buttons |= (faceBtnSouthPressed) ? SingleControllerButtons::faceSouth : 0x0000;
-    state.buttons |= (faceBtnWestPressed) ? SingleControllerButtons::faceWest : 0x0000;
-    state.buttons |= (trackpadBtnPressed) ? SingleControllerButtons::trackpadBtn : 0x0000;
-    state.buttons |= (bumperPressed) ? SingleControllerButtons::bumper : 0x0000;
-    state.buttons |= (menuBtnAPressed) ? SingleControllerButtons::menuA : 0x0000;
-    state.buttons |= (menuBtnBPressed) ? SingleControllerButtons::menuB : 0x0000;
+    if(faceBtnNorthPressed)
+        state.buttons |= SingleControllerButtons::faceNorth;
+    else
+        state.buttons &= ~SingleControllerButtons::faceNorth;
 
-    state.x = lastAbsData.xValue;
-    state.y = lastAbsData.yValue;
-    state.z = lastAbsData.zValue;
-    state.trigger = int16_t(triggerValue * 32767);
+    if(faceBtnEastPressed)
+        state.buttons |= SingleControllerButtons::faceEast;
+    else
+        state.buttons &= ~SingleControllerButtons::faceEast;
+
+    if(faceBtnSouthPressed)
+        state.buttons |= SingleControllerButtons::faceSouth;
+    else
+        state.buttons &= ~SingleControllerButtons::faceSouth;
+
+    if(faceBtnWestPressed)
+        state.buttons |= SingleControllerButtons::faceWest;
+    else
+        state.buttons &= ~SingleControllerButtons::faceWest;
+
+    if(trackpadBtnPressed)
+        state.buttons |= SingleControllerButtons::trackpadBtn;
+    else
+        state.buttons &= ~SingleControllerButtons::trackpadBtn;
+
+    if(bumperPressed)
+        state.buttons |= SingleControllerButtons::bumper;
+    else
+        state.buttons &= ~SingleControllerButtons::bumper;
+    
+    if(menuBtnAPressed)
+        state.buttons |= SingleControllerButtons::menuA;
+    else
+        state.buttons &= ~SingleControllerButtons::menuA;
+    
+    if(menuBtnBPressed)
+        state.buttons |= SingleControllerButtons::menuB;
+    else
+        state.buttons &= ~SingleControllerButtons::menuB;
+
+    if(lastAbsData.touchDown)
+        state.buttons |= SingleControllerButtons::trackpadTouched;
+    else
+        state.buttons &= ~SingleControllerButtons::trackpadTouched;
+
+    if(satelliteTriggerTouched)
+        state.buttons |= SingleControllerButtons::triggerTouched;
+    else
+        state.buttons &= ~SingleControllerButtons::triggerTouched;
+
+    // state.x = lastAbsData.xValue;
+    // state.y = lastAbsData.yValue;
+    // state.z = lastAbsData.zValue;
+    state.absTrackpadData = lastAbsData;
+    state.trigger = constrain(int16_t(triggerValue * XBOX_TRIGGER_MAX), 0, XBOX_TRIGGER_MAX);
 
     return state;
 }

@@ -20,6 +20,8 @@
 //  SS = Pin 8
 //  DR = Pin 7
 
+#pragma once
+
 #include <SPI.h>
 
 // Masks for Cirque Register Access Protocol (RAP)
