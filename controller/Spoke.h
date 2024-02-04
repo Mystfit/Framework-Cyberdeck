@@ -1,7 +1,9 @@
 #pragma once
 
 #include <NimBLEDevice.h>
+#include <XboxGamepadDevice.h>
 #include "CirqueTrackpad.h"
+
 
 #define SATELLITE_SERVICE "5A00"
 #define SATELLITE_INPUT_CHARACTERISTIC "5A10"
@@ -68,8 +70,14 @@ public:
     void notifyHub(const PackedGamepadInputState& state);
 
     bool isHubConnected();
+    bool isDataReady();
+    void consumeInputData();
+    const XboxGamepadOutputReportData& getLastReceivedHubInput();
 
 private:
     NimBLEServer* _pServer;
     bool _hubConnected;
+
+    XboxGamepadOutputReportData _lastReceviedHubInput;
+    bool _dataReady;
 };

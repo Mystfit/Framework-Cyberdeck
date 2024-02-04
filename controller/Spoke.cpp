@@ -9,10 +9,13 @@
 */
 
 #include "Spoke.h"
+#include <XboxGamepadDevice.h>
 
 Spoke::Spoke() : 
     _pServer(nullptr),
-    _hubConnected(false)
+    _hubConnected(false),
+    _dataReady(false),
+    _lastReceviedHubInput()
 {
 }
 
@@ -52,6 +55,14 @@ void Spoke::onWrite(NimBLECharacteristic* pCharacteristic) {
     Serial.print(pCharacteristic->getUUID().toString().c_str());
     Serial.print(": onWrite(), value: ");
     Serial.println(pCharacteristic->getValue().c_str());
+    //auto remoteServiceUUID = std::string(pRemoteCharacteristic->getRemoteService()->getUUID());
+    //auto remoteCharacteristicUUID = std::string(pRemoteCharacteristic->getUUID());
+    if (pCharacteristic->getService()->getUUID() == NimBLEUUID(SATELLITE_SERVICE) && 
+        pCharacteristic->getUUID() == NimBLEUUID(SATELLITE_OUTPUT_CHARACTERISTIC)) {
+            _lastReceviedHubInput = pCharacteristic->getValue<XboxGamepadOutputReportData>();
+            _dataReady = true;
+            Serial.print("Received vibration event from hub");
+    }
 };
 
 void Spoke::onNotify(NimBLECharacteristic* pCharacteristic) {
@@ -135,10 +146,10 @@ void Spoke::init() {
     NimBLECharacteristic* pGamepadOutputCharacteristic = pGamepadService->createCharacteristic(
                                                SATELLITE_OUTPUT_CHARACTERISTIC,
                                                NIMBLE_PROPERTY::WRITE,
-                                               sizeof(PackedGamepadOutputState)
+                                               sizeof(XboxGamepadOutputReportData)
     );
     pGamepadOutputCharacteristic->setCallbacks(this);
-    PackedGamepadOutputState defaultOutputState;
+    XboxGamepadOutputReportData defaultOutputState;
     pGamepadOutputCharacteristic->setValue((uint8_t*)&defaultOutputState, sizeof(defaultOutputState));
 
     /** Start the services when finished creating all Characteristics and Descriptors */
@@ -174,4 +185,16 @@ void Spoke::notifyHub(const PackedGamepadInputState& state){
 
 bool Spoke::isHubConnected(){
     return _hubConnected;
+}
+
+bool Spoke::isDataReady (){
+    return _dataReady;
+}
+
+void Spoke::consumeInputData (){
+    _dataReady = false;
+}
+
+const XboxGamepadOutputReportData& Spoke::getLastReceivedHubInput(){
+    return _lastReceviedHubInput;
 }

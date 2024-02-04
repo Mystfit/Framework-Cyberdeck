@@ -252,6 +252,20 @@ bool Hub::connectToServer() {
             Serial.println("Satellite controller input characteristic not found.");
         }
 
+        // Find satellite output characteristic
+        pChr = pSvc->getCharacteristic(SATELLITE_OUTPUT_CHARACTERISTIC);
+        if(pChr){
+            if(pChr->canWrite()) {
+                Serial.print(pChr->getUUID().toString().c_str());
+                Serial.print(" Value: ");
+                Serial.println(pChr->readValue().c_str());
+            } else {
+                Serial.println("Satellite controller output characteristic does not support writing.");
+            }
+        } else {
+            Serial.println("Satellite controller output characteristic not found.");
+        }
+
     } else {
         Serial.println("Satellite controller service not found.");
     }
@@ -339,4 +353,17 @@ bool Hub::isDataReady (){
 
 void Hub::consumeInputData (){
     _dataReady = false;
+}
+
+NimBLERemoteCharacteristic* Hub::getSatelliteOutputCharacteristic (){
+    if(_advDevice){
+        NimBLEClient* pClient = NimBLEDevice::getClientByPeerAddress(_advDevice->getAddress());
+        if(pClient){
+            NimBLERemoteService* pSvc = pClient->getService(SATELLITE_SERVICE);
+            if(pSvc){
+                return pSvc->getCharacteristic(SATELLITE_OUTPUT_CHARACTERISTIC);
+            }
+        }
+    }
+    return nullptr;
 }

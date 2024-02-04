@@ -4,6 +4,7 @@
 #include "CirqueTrackpad.h"
 #include "Hub.h"
 #include "Spoke.h"
+#include "Haptics.h"
 
 #include <MouseDevice.h>
 #include <XboxGamepadDevice.h>
@@ -132,8 +133,7 @@ MouseDevice* mouse = nullptr;
 BleCompositeHID composite("PicaTTY Controller", "Mystfit", 100);
 
 // Haptics
-Ticker hapticTimer;
-bool hapticState = false;
+Haptics haptics(HAPTIC_PIN);
 
 // Connection
 ConnectionMode currentConnectionMode = ConnectionMode::Hub;
@@ -306,14 +306,34 @@ int overlaysCount = 1;
 void OnVibrateEvent(XboxGamepadOutputReportData data)
 {
     if(data.weakMotorMagnitude > 0 || data.strongMotorMagnitude > 0){
-        if(data.strongMotorMagnitude > 0)
-            hapticStart(160);
-        if(data.weakMotorMagnitude > 0)
-            hapticStart(320);
+        if(data.strongMotorMagnitude > 0){
+            haptics.hapticStartHorizontal();
+        } else {
+            haptics.hapticStopHorizontal();
+        }
+        if(data.weakMotorMagnitude > 0){
+            //haptics.hapticStartVertical();
+        } else {
+            //haptics.hapticStopVertical();
+        }
     } else {
-        hapticStop();
+        haptics.hapticsStopAll();
     }
-    Serial.println("Vibration event. Weak motor: " + String(data.weakMotorMagnitude) + " Strong motor: " + String(data.strongMotorMagnitude));
+
+    // Forward vibration data to satellite controller
+    if(currentConnectionMode == ConnectionMode::Hub){
+        const char LOG_TAG[] = "Vibration";
+        auto outputChr = hubController->getSatelliteOutputCharacteristic();
+        ESP_LOGD(LOG_TAG, "About to write vibration event to satellite controller");
+        if(outputChr){       
+            ESP_LOGD(LOG_TAG, "Found remote vibration characteristic");
+            outputChr->writeValue((uint8_t*)&data, sizeof(data), false);
+        } else {
+            ESP_LOGD(LOG_TAG, "Could not locate remote vibration characteristic");
+        }
+    } else {
+        ESP_LOGD("Vibration", "Vibration event. Weak motor: %d Strong motor: %d", data.weakMotorMagnitude, data.strongMotorMagnitude);
+    }
 }
 
 void setup() {
@@ -347,10 +367,6 @@ void setup() {
     //     while (1) { delay(10); }
     // }
     // imu.enableReport(SH2_ARVR_STABILIZED_RV, 5000);
-
-    // Set up haptics
-    Serial.println("Enabling haptic");
-    pinMode(HAPTIC_PIN, OUTPUT);
 
     // Set up trackpad
     Serial.println("Enabling trackpad");
@@ -438,17 +454,32 @@ void updateLocalButtons(){
     if(!faceBtnNorthPressed && !MCP.read1(BUTTON_1_PIN)){
         faceBtnNorthPressed = true;
         dataUpdated = true;
-        hapticPulse(160, 100);
+        haptics.hapticStartHorizontal();
         if(currentConnectionMode == ConnectionMode::Hub){
             if(currentControllerHand == ControllerHand::Left)
                 dPadDirection = (XboxDpadFlags)((uint8_t)dPadDirection | (uint8_t)XboxDpadFlags::NORTH);
             else
                 gamepad->press(XBOX_BUTTON_Y);
+            
+            // --
+            XboxGamepadOutputReportData data;
+            data.strongMotorMagnitude = 255; 
+            const char LOG_TAG[] = "Vibration";
+            auto outputChr = hubController->getSatelliteOutputCharacteristic();
+            ESP_LOGD(LOG_TAG, "About to write vibration event to satellite controller");
+            if(outputChr){       
+                ESP_LOGD(LOG_TAG, "Found remote vibration characteristic");
+                outputChr->writeValue((uint8_t*)&data, sizeof(data), false);
+            } else {
+                ESP_LOGD(LOG_TAG, "Could not locate remote vibration characteristic");
+            }
+            // --
         }
     } 
     if (faceBtnNorthPressed && MCP.read1(BUTTON_1_PIN)) {
         faceBtnNorthPressed = false;
         dataUpdated = true;
+        haptics.hapticStopHorizontal();
         if(currentConnectionMode == ConnectionMode::Hub){
             if(currentControllerHand == ControllerHand::Left)
                 dPadDirection = (XboxDpadFlags)((uint8_t)dPadDirection & ~(uint8_t)XboxDpadFlags::NORTH);
@@ -460,7 +491,7 @@ void updateLocalButtons(){
     if(!faceBtnEastPressed && !MCP.read1(BUTTON_2_PIN)){
         faceBtnEastPressed = true;
         dataUpdated = true;
-        hapticPulse(160, 100);
+        haptics.hapticStartHorizontal();
         if(currentConnectionMode == ConnectionMode::Hub){
             if(currentControllerHand == ControllerHand::Left)
                 dPadDirection = (XboxDpadFlags)((uint8_t)dPadDirection | (uint8_t)XboxDpadFlags::EAST);
@@ -471,6 +502,7 @@ void updateLocalButtons(){
     if (faceBtnEastPressed && MCP.read1(BUTTON_2_PIN)) {
         faceBtnEastPressed = false;
         dataUpdated = true;
+        haptics.hapticStopHorizontal();
         if(currentConnectionMode == ConnectionMode::Hub){
             if(currentControllerHand == ControllerHand::Left)
                 dPadDirection = (XboxDpadFlags)((uint8_t)dPadDirection & ~(uint8_t)XboxDpadFlags::EAST);
@@ -482,7 +514,7 @@ void updateLocalButtons(){
     if(!faceBtnSouthPressed && !MCP.read1(BUTTON_3_PIN)){
         faceBtnSouthPressed = true;
         dataUpdated = true;
-        hapticPulse(160, 100);
+        haptics.hapticStartHorizontal();
         if(currentConnectionMode == ConnectionMode::Hub){
             if(currentControllerHand == ControllerHand::Left)
                 dPadDirection = (XboxDpadFlags)((uint8_t)dPadDirection | (uint8_t)XboxDpadFlags::SOUTH);
@@ -493,6 +525,7 @@ void updateLocalButtons(){
     if (faceBtnSouthPressed && MCP.read1(BUTTON_3_PIN)) {
         faceBtnSouthPressed = false;
         dataUpdated = true;
+        haptics.hapticStopHorizontal();
         if(currentConnectionMode == ConnectionMode::Hub){
             if(currentControllerHand == ControllerHand::Left)
                dPadDirection = (XboxDpadFlags)((uint8_t)dPadDirection & ~(uint8_t)XboxDpadFlags::SOUTH);
@@ -504,7 +537,7 @@ void updateLocalButtons(){
     if(!faceBtnWestPressed && !MCP.read1(BUTTON_4_PIN)){
         faceBtnWestPressed = true;
         dataUpdated = true;
-        hapticPulse(160, 100);
+        haptics.hapticStartHorizontal();
         if(currentConnectionMode == ConnectionMode::Hub){
             if(currentControllerHand == ControllerHand::Left)
                 dPadDirection = (XboxDpadFlags)((uint8_t)dPadDirection | (uint8_t)XboxDpadFlags::WEST);
@@ -515,6 +548,7 @@ void updateLocalButtons(){
     if (faceBtnWestPressed && MCP.read1(BUTTON_4_PIN)) {
         faceBtnWestPressed = false;
         dataUpdated = true;
+        haptics.hapticStopHorizontal();
         if(currentConnectionMode == ConnectionMode::Hub){
             if(currentControllerHand == ControllerHand::Left)
                 dPadDirection = (XboxDpadFlags)((uint8_t)dPadDirection & ~(uint8_t)XboxDpadFlags::WEST);
@@ -532,13 +566,14 @@ void updateLocalButtons(){
     if(!trackpadBtnPressed && !MCP.read1(BUTTON_5_PIN)){
         trackpadBtnPressed = true;
         dataUpdated = true;
-        hapticPulse(160, 100);
+        haptics.hapticStartVertical();
         if(currentConnectionMode == ConnectionMode::Hub)
             gamepad->press((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_LS : XBOX_BUTTON_RS);
     } 
     if (trackpadBtnPressed && MCP.read1(BUTTON_5_PIN)) {
         trackpadBtnPressed = false;
         dataUpdated = true;
+        haptics.hapticStopVertical();
         if(currentConnectionMode == ConnectionMode::Hub)
             gamepad->release((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_LS : XBOX_BUTTON_RS);
     }
@@ -546,13 +581,14 @@ void updateLocalButtons(){
     if(!bumperPressed && !MCP.read1(BUTTON_6_PIN)){
         bumperPressed = true;
         dataUpdated = true;
-        hapticPulse(160, 100);
+        haptics.hapticStartVertical();
         if(currentConnectionMode == ConnectionMode::Hub)
             gamepad->press((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_LB : XBOX_BUTTON_RB);
     }
     if (bumperPressed && MCP.read1(BUTTON_6_PIN)) {
         bumperPressed = false;
         dataUpdated = true;
+        haptics.hapticStopVertical();
         if(currentConnectionMode == ConnectionMode::Hub)
             gamepad->release((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_LB : XBOX_BUTTON_RB);
     }
@@ -560,13 +596,14 @@ void updateLocalButtons(){
     if(!menuBtnAPressed && !MCP.read1(BUTTON_7_PIN)){
         menuBtnAPressed = true;
         dataUpdated = true;
-        hapticPulse(160, 100);
+        haptics.hapticStartVertical();
         if(currentConnectionMode == ConnectionMode::Hub)
             gamepad->press((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_SELECT : XBOX_BUTTON_START);
     } 
     if (menuBtnAPressed && MCP.read1(BUTTON_7_PIN)) {
         menuBtnAPressed = false;
         dataUpdated = true;
+        haptics.hapticStopVertical();
         if(currentConnectionMode == ConnectionMode::Hub)
             gamepad->release((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_SELECT : XBOX_BUTTON_START);
     }
@@ -574,13 +611,14 @@ void updateLocalButtons(){
     if(!menuBtnBPressed && !MCP.read1(BUTTON_8_PIN)){
         menuBtnBPressed = true;
         dataUpdated = true;
-        hapticPulse(160, 100);
+        haptics.hapticStartVertical();
         if(currentConnectionMode == ConnectionMode::Hub)
             gamepad->press((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_HOME : XBOX_BUTTON_SHARE);
     }  
     if (menuBtnBPressed && MCP.read1(BUTTON_8_PIN)) {
         menuBtnBPressed = false;
         dataUpdated = true;
+        haptics.hapticStopVertical();
         if(currentConnectionMode == ConnectionMode::Hub)
             gamepad->release((currentControllerHand == ControllerHand::Left) ? XBOX_BUTTON_HOME : XBOX_BUTTON_SHARE);
     }
@@ -899,6 +937,12 @@ void loop() {
         if(spokeController){
             if(dataUpdated)
                 spokeController->notifyHub(getPackedGamepadState());    
+            
+            if(spokeController->isDataReady()){
+                auto data = spokeController->getLastReceivedHubInput();
+                OnVibrateEvent(spokeController->getLastReceivedHubInput());
+                spokeController->consumeInputData();
+            }
         }
     }
     
@@ -908,38 +952,6 @@ void loop() {
     dataUpdated = false;
 
     delay(8);
-}
-
-// Toggles the haptic drive transistor every time it's called
-void hapticTimerInterrupt(bool* hapticState)
-{
-    *hapticState = !(*hapticState);
-    digitalWrite(HAPTIC_PIN, *hapticState);
-}
-
-// Create a pulse at <freq> for <duration> milliseconds
-void hapticPulse(uint16_t freq, uint16_t duration)
-{
-  hapticStart(freq);
-  delay(duration);
-  hapticStop();
-}
-
-// Start driving the haptic at <freq> Hz
-void hapticStart(uint32_t freq)
-{
-    hapticTimer.detach();
-    hapticState = false;
-    float half_interval = 0.5f / freq;
-    hapticTimer.attach(half_interval, hapticTimerInterrupt, &hapticState);
-}
-
-// Stop driving the haptic
-void hapticStop(void)
-{
-  hapticTimer.detach();
-  digitalWrite(HAPTIC_PIN, LOW);
-  hapticState = false;
 }
 
 PackedGamepadInputState getPackedGamepadState(){
